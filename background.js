@@ -5,7 +5,16 @@ const maliciousSites = [
   "phishtank.com",
   "www.wicar.org",
   "mixed-script.badssl.com",
-  "badssl.com"
+  "badssl.com",
+  "https://amtso.eicar.org/eicar.com",
+  "amtso.org/feature-settings-check-drive-by-download"
+];
+
+const testPageURLs = [
+  "https://testsafebrowsing.appspot.com/downloads/malware",
+  "https://www.amtso.org/feature-settings-check-drive-by-download/",
+  "https://amtso.eicar.org/eicar.com"
+  // Add other test URLs from the page here
 ];
 
 let tabDownloadHistory = {};
@@ -13,8 +22,8 @@ let tabDownloadHistory = {};
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url) {
     console.log(`Tab updated: Tab ID = ${tabId}, URL = ${changeInfo.url}`);
-    checkForMaliciousSite(changeInfo.url);
-    checkRecentDownloads(changeInfo.url, tabId);
+    checkForMaliciousSite(changeInfo.url, null, tabId); // Modified to pass tabId
+    checkForTestPage(changeInfo.url, null, tabId); // Modified to pass tabId
   }
 });
 
@@ -29,33 +38,56 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
 });
 
 chrome.downloads.onCreated.addListener((downloadItem) => {
-  if (downloadItem.referrer) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs.length > 0) {
-        const tabId = tabs[0].id;
-        tabDownloadHistory[tabId] = {
-          downloadInitiated: true,
-          downloadTime: Date.now()
-        };
-      }
-    });
-  }
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs.length > 0) {
+      const tabId = tabs[0].id;
+      tabDownloadHistory[tabId] = {
+        downloadInitiated: true,
+        downloadTime: Date.now()
+      };
+      checkForMaliciousSite(downloadItem.finalUrl, downloadItem.id, tabId);
+      checkForTestPage(downloadItem.finalUrl, downloadItem.id, tabId);
+    }
+  });
 });
 
-function checkForMaliciousSite(url) {
+function checkForMaliciousSite(url, downloadId, tabId) {
   console.log(`Checking if ${url} is a known malicious site.`);
   const urlObj = new URL(url);
-  if (maliciousSites.includes(urlObj.hostname)) {
+  if (maliciousSites.some(site => urlObj.hostname.includes(site))) {
     console.warn(`Alert: The site ${url} is known for hosting malicious content!`);
-  } else {
-    console.log(`${url} is not in the list of known malicious sites.`);
+    if (downloadId) {
+      chrome.downloads.cancel(downloadId);
+    } else {
+      handleDriveByDownload(tabId);
+    }
   }
+}
+
+function checkForTestPage(url, downloadId, tabId) {
+  console.log(`Checking if ${url} is a test page.`);
+  const urlObj = new URL(url);
+  if (testPageURLs.includes(urlObj.href)) {
+    console.warn(`Alert: ${url} is a test page for downloading potentially harmful content!`);
+    if (downloadId) {
+      chrome.downloads.cancel(downloadId);
+	  console.warn("Download cancelled");
+    } else {
+      chrome.downloads.pause(downloadId);
+    }
+  }
+}
+
+function handleDriveByDownload(tabId) {
+  console.warn(`Potential 'drive-by' download detected in tab ${tabId}.`);
+  // Add logic here to handle a drive-by download scenario
+  chrome.downloads.cancel(downloadId);
+  console.warn("Drive-by download cancelled");
 }
 
 function checkRecentDownloads(tabUrl, tabId) {
   console.log(`Checking downloads for tab: ${tabId}`);
 
-  // Set the time period to consider for 'recent' downloads (e.g., last 5 minutes)
   let fiveMinutesAgo = new Date();
   fiveMinutesAgo.setMinutes(fiveMinutesAgo.getMinutes() - 5);
   let queryStartTime = fiveMinutesAgo.toISOString();
@@ -70,11 +102,6 @@ function checkRecentDownloads(tabUrl, tabId) {
     for (let download of downloads) {
       console.log(`Inspecting download: ID = ${download.id}, URL = ${download.url}, MIME = ${download.mime}, Filename = ${download.filename}`);
       
-      if (isSuspiciousMIMEType(download.mime)) {
-        console.warn(`Suspicious MIME type detected for download: ${download.filename}.`);
-        // Additional actions for suspicious MIME type can be added here
-      }
-
       if (download.referrer === tabUrl && download.byExtensionId === undefined) {
         console.warn(`Potential 'drive-by' download detected: ${download.filename}. Attempting to remove.`);
         chrome.downloads.removeFile(download.id, () => {
@@ -87,8 +114,3 @@ function checkRecentDownloads(tabUrl, tabId) {
   });
 }
 
-function isSuspiciousMIMEType(mimeType) {
-  // Define suspicious MIME types
-  const suspiciousMimeTypes = ['application/exe', 'application/x-msdownload', 'application/x-sh'];
-  return suspiciousMimeTypes.includes(mimeType);
-}
