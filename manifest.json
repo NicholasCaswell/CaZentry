@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "CaZentry",
+  "version": "1.0",
+  "permissions": [
+    "tabs",
+    "downloads"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
